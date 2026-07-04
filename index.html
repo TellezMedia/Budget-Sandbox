@@ -593,6 +593,11 @@
 
     <!-- DASHBOARD -->
     <div id="screen-dashboard" class="screen active">
+      <div class="form-card" style="border:1px solid #e05252;background:rgba(224,82,82,0.06);">
+        <div class="form-title" style="color:#e05252;">Sandbox tools</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:16px;margin-top:-8px;">Populates this sandbox with realistic sample accounts, expenses, bills, a scheduled payment, a deposit, and a transfer, so you can test features without typing everything by hand.</p>
+        <button class="btn btn-primary" onclick="loadSampleData()" id="sample-data-btn">Load sample data</button>
+      </div>
       <div class="section-title">Overview</div>
       <div class="cards-row" id="balance-cards">
         <div id="account-cards-container" style="display:contents"></div>
@@ -1989,6 +1994,93 @@
     await addToBalance(to, amt);
     clear('xfer-desc'); clear('xfer-amount');
     renderAll(); showToast(fmt(amt) + ' moved from ' + from + ' to ' + to + '.', 'success');
+  }
+
+  function isoOffset(days) {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  }
+
+  async function loadSampleData() {
+    if (!confirm('This will add sample accounts, expenses, bills, a scheduled payment, a deposit, and a transfer to this sandbox. Continue?')) return;
+    const btn = document.getElementById('sample-data-btn');
+    btn.disabled = true;
+    btn.textContent = 'Loading sample data...';
+    try {
+      // Accounts. Emergency Fund is deliberately under the default $100
+      // low balance threshold so that warning is visible right away.
+      document.getElementById('bal-account').value = 'Checking';
+      document.getElementById('bal-amount').value = '2400';
+      await addBalance();
+
+      document.getElementById('bal-account').value = 'Savings';
+      document.getElementById('bal-amount').value = '6200';
+      await addBalance();
+
+      document.getElementById('bal-account').value = 'Emergency Fund';
+      document.getElementById('bal-amount').value = '45';
+      await addBalance();
+
+      // Expenses across several days, categories, and accounts
+      const sampleExpenses = [
+        { date: isoOffset(0),  desc: "Trader Joe's", amount: 64.30, category: 'Groceries',    account: 'Checking' },
+        { date: isoOffset(0),  desc: 'Netflix',       amount: 15.49, category: 'Subscriptions', account: 'Checking' },
+        { date: isoOffset(-1), desc: 'Shell Gas',     amount: 38.20, category: 'Gas',          account: 'Checking' },
+        { date: isoOffset(-2), desc: 'Chipotle',      amount: 12.75, category: 'Dining Out',   account: 'Checking' },
+        { date: isoOffset(-3), desc: 'Amazon',        amount: 54.99, category: 'Shopping',     account: 'Savings' }
+      ];
+      for (const e of sampleExpenses) {
+        document.getElementById('exp-date').value = e.date;
+        document.getElementById('exp-desc').value = e.desc;
+        document.getElementById('exp-amount').value = e.amount;
+        document.getElementById('exp-category').value = e.category;
+        document.getElementById('exp-account').value = e.account;
+        await saveExpense();
+      }
+
+      // Bills
+      document.getElementById('bill-name').value = 'Rent';
+      document.getElementById('bill-amount').value = '1450';
+      document.getElementById('bill-day').value = '1';
+      document.getElementById('bill-account').value = 'Checking';
+      document.getElementById('bill-freq').value = 'Monthly';
+      await saveBill();
+
+      document.getElementById('bill-name').value = 'Internet';
+      document.getElementById('bill-amount').value = '70';
+      document.getElementById('bill-day').value = '15';
+      document.getElementById('bill-account').value = 'Checking';
+      document.getElementById('bill-freq').value = 'Monthly';
+      await saveBill();
+
+      // Scheduled payment due in 5 days
+      document.getElementById('sched-name').value = 'Car Insurance';
+      document.getElementById('sched-amount').value = '180';
+      document.getElementById('sched-date').value = isoOffset(5);
+      document.getElementById('sched-account').value = 'Checking';
+      await saveScheduled();
+
+      // Deposit
+      document.getElementById('dep-desc').value = 'Paycheck';
+      document.getElementById('dep-amount').value = '2200';
+      document.getElementById('dep-account').value = 'Checking';
+      await addDeposit();
+
+      // Transfer, to exercise the Move Money feature and the balance check
+      document.getElementById('xfer-from').value = 'Checking';
+      document.getElementById('xfer-to').value = 'Savings';
+      document.getElementById('xfer-amount').value = '300';
+      document.getElementById('xfer-desc').value = 'Move to savings';
+      await transferMoney();
+
+      showToast('Sample data loaded. Explore away.', 'success');
+    } catch (e) {
+      showToast('Something failed partway through. Whatever loaded is still real data in this sandbox.', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Load sample data';
+    }
   }
 
   async function balanceTransactionsCheck() {
