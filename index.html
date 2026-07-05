@@ -204,6 +204,9 @@
       gap: 0;
       padding: 0 24px;
       overflow-x: auto;
+      position: sticky;
+      top: 56px;
+      z-index: 99;
     }
 
     .nav-tab {
@@ -1754,6 +1757,52 @@
     renderAll();
   }
 
+  // Returns the resulting balance if a deduction would take an account
+  // negative, or null if the account is unknown or would stay at or above
+  // zero. Used to decide whether to show the overdraft warning.
+  function overdraftResult(accountName, amount) {
+    const acct = userData.balances.find(b => b.account.toLowerCase() === (accountName || '').toLowerCase());
+    if (!acct) return null;
+    const resulting = acct.balance - amount;
+    return resulting < 0 ? resulting : null;
+  }
+
+  // Shows the lightbox itself. Resolves true to continue, false to cancel.
+  function showOverdraftModal(accountName, resultingBalance) {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:10001;display:flex;align-items:center;justify-content:center;padding:20px;';
+      overlay.innerHTML = `
+        <div style="background:var(--surface);border:1px solid var(--danger);border-radius:14px;padding:28px;max-width:360px;width:100%;text-align:center;">
+          <div style="font-size:32px;margin-bottom:12px;">&#9888;&#65039;</div>
+          <div style="font-size:16px;font-weight:700;margin-bottom:8px;color:var(--text);">This will overdraw ${accountName}</div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:20px;">Resulting balance would be <span style="color:var(--danger);font-weight:700;">${fmt(resultingBalance)}</span></div>
+          <div style="display:flex;gap:10px;justify-content:center;">
+            <button class="btn btn-secondary" id="overdraft-cancel-btn">Cancel</button>
+            <button class="btn btn-primary" id="overdraft-continue-btn" style="background:var(--danger);border-color:var(--danger);">Continue anyway</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      overlay.querySelector('#overdraft-cancel-btn').onclick = () => { overlay.remove(); resolve(false); };
+      overlay.querySelector('#overdraft-continue-btn').onclick = () => { overlay.remove(); resolve(true); };
+    });
+  }
+
+  // Computes whether a deduction would overdraw an account, and shows the
+  // lightbox only if it would. Returns true immediately otherwise.
+  function confirmOverdraft(accountName, amount) {
+    const resulting = overdraftResult(accountName, amount);
+    if (resulting === null) return Promise.resolve(true);
+    return showOverdraftModal(accountName, resulting);
+  }
+
+  // Same lightbox, but for callers (like editing an expense) that have
+  // already worked out the true resulting balance themselves.
+  function confirmOverdraftCustom(accountName, resultingBalance) {
+    return showOverdraftModal(accountName, resultingBalance);
+  }
+
   async function deductFromBalance(accountName, amount) {
     if (!accountName || !amount) return;
     const idx = userData.balances.findIndex(b => b.account.toLowerCase() === accountName.toLowerCase());
@@ -1792,6 +1841,15 @@
     if (editingExpenseIndex !== null) {
       const i = editingExpenseIndex;
       const old = userData.expenses[i];
+      // Account for the reversal that happens before the new deduction so
+      // the warning reflects the real resulting balance, not a false alarm.
+      const acctNow = userData.balances.find(b => b.account.toLowerCase() === acc.toLowerCase());
+      const sameAccount = old.account.toLowerCase() === acc.toLowerCase();
+      const projected = acctNow ? (sameAccount ? acctNow.balance + old.amount - amt : acctNow.balance - amt) : null;
+      if (projected !== null && projected < 0) {
+        const proceed = await confirmOverdraftCustom(acc, projected);
+        if (!proceed) { showToast('Edit not saved.', 'error'); return; }
+      }
       // Reverse the old amount's effect on its original account, then apply
       // the new amount to whichever account is now selected. Handles both
       // an amount change and an account change in one pass.
@@ -1809,6 +1867,7 @@
       return;
     }
 
+    if (!(await confirmOverdraft(acc, amt))) { showToast('Expense not saved.', 'error'); return; }
     const synced = await appendRow(TABS.expenses, [d, desc, cat, acc, amt]);
     userData.expenses.unshift({ date: d, desc, category: cat, account: acc, amount: amt, _seq: Date.now() });
     await logTransaction('Expense', desc, acc, amt);
@@ -1984,6 +2043,7 @@
     if (!from || !to || !amt) { showToast('Fill in from, to, and amount.', 'error'); return; }
     if (from === to) { showToast('Pick two different accounts to move money between.', 'error'); return; }
     if (!desc) desc = 'Transfer between ' + from + ' and ' + to;
+    if (!(await confirmOverdraft(from, amt))) { showToast('Transfer not completed.', 'error'); return; }
     // Logged as two linked entries, one per account, so per-account math
     // (Balance Transactions check) and filtering stay correct. Neither
     // "Transfer Out" nor "Transfer In" ever lands in the Expenses sheet,
@@ -2237,6 +2297,7 @@
     const payment = userData.scheduled[i];
     const wasPaid = payment.status === 'Paid';
     const newStatus = wasPaid ? 'Upcoming' : 'Paid';
+    if (!wasPaid && !(await confirmOverdraft(payment.account, payment.amount))) return;
     await updateCell(TABS.scheduled, i, 4, newStatus);
     userData.scheduled[i].status = newStatus;
     if (!wasPaid) {
@@ -2502,6 +2563,7 @@
     const bill = userData.bills[i];
     const key = billPaidKey(bill.name);
     const wasPaid = isBillPaidThisMonth(bill.name);
+    if (!wasPaid && !(await confirmOverdraft(bill.account, bill.amount))) return;
     try {
       if (wasPaid) {
         localStorage.removeItem(key);
